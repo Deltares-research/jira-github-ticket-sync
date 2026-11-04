@@ -1,6 +1,8 @@
+from copy import deepcopy
 from unittest.mock import patch
 
 import pytest
+from jira_sync import jira_client
 from jira_sync import jira_to_github as module
 
 
@@ -33,6 +35,89 @@ def test_build_synced_body_appends_jira_postfix():
     assert body == (
         "Jira description\n\n----------------------------------------\n"
         "Automatically synced at: https://example.atlassian.net/browse/MLPS-127"
+    )
+
+
+@pytest.mark.parametrize("existing_number", [None, 5, 9])
+def test_sync_preserves_description_formatting(
+    formatted_description, formatted_markdown, existing_number
+):
+    description = deepcopy(formatted_description)
+    if existing_number is not None:
+        description["content"].extend(
+            jira_client.text_to_adf(tracked(existing_number))["content"]
+        )
+    if existing_number == 9:
+        description["content"][-1]["content"] = [
+            {"type": "text", "text": "----------------------------------------"},
+            {"type": "hardBreak"},
+            {"type": "text", "text": tracked(9)},
+        ]
+    original = deepcopy(description)
+    issue = make_issue("MLPS-6", description, "new")
+    existing_issue = {"number": 5, "state": "open", "body": ""}
+    with (
+        patch(
+            "jira_sync.jira_to_github.gh.get_issue",
+            return_value=existing_issue if existing_number == 5 else None,
+        ),
+        patch("jira_sync.jira_to_github.gh.create_issue", return_value=11),
+        patch("jira_sync.jira_client.requests.request") as request,
+    ):
+        number, _, body = module.ensure_github_issue(issue)
+
+    assert number == (5 if existing_number == 5 else 11)
+    assert body == module.build_synced_body("MLPS-6", formatted_markdown)
+    request.assert_called_once()
+    written = request.call_args.kwargs["json"]["fields"]["description"]
+    assert written["content"][:3] == formatted_description["content"]
+    assert jira_client.adf_to_text(written).endswith(
+        f"Automatically synced at: https://github.com/owner/repo/issues/{number}"
+    )
+    assert "issues/9" not in jira_client.adf_to_text(written)
+    assert description == original
+    issue["fields"]["description"] = written
+    with (
+        patch("jira_sync.jira_to_github.gh.get_issue", return_value={"number": number}),
+        patch("jira_sync.jira_to_github.jira.update_description") as update,
+    ):
+        assert module.ensure_github_issue(issue)[2] == body
+    update.assert_not_called()
+
+
+def test_epic_parent_preserves_formatting(formatted_description, formatted_markdown):
+    epic = make_issue("MLPS-118", formatted_description, "new")
+    with (
+        patch("jira_sync.jira_to_github.jira.get_issue", return_value=epic),
+        patch("jira_sync.jira_to_github.gh.search_issues", return_value=[]),
+        patch("jira_sync.jira_to_github.gh.create_issue", return_value=99) as create,
+        patch("jira_sync.jira_to_github.gh.get_issue", return_value={"number": 99}),
+        patch("jira_sync.jira_client.requests.request") as request,
+    ):
+        module.ensure_epic_issue()
+
+    create.assert_called_once_with(
+        "Summary", module.build_epic_body(formatted_markdown)
+    )
+    written = request.call_args.kwargs["json"]["fields"]["description"]
+    assert written["content"][:3] == formatted_description["content"]
+
+
+def test_sync_comments_preserves_formatting(formatted_description, formatted_markdown):
+    with (
+        patch("jira_sync.jira_to_github.gh.list_comments", return_value=[]),
+        patch(
+            "jira_sync.jira_to_github.jira.list_comments",
+            return_value=[make_jira_comment("10", formatted_description)],
+        ),
+        patch("jira_sync.jira_to_github.gh.add_comment") as add_comment,
+    ):
+        module.sync_comments("MLPS-1", 5)
+
+    add_comment.assert_called_once_with(
+        5,
+        f"_Synced from Jira comment by Jira user:_\n\n{formatted_markdown}\n\n"
+        "<!-- jira-comment-id:10 -->",
     )
 
 

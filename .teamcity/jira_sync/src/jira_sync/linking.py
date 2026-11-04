@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
+
+from jira_sync.jira_client import adf_to_text, text_to_adf
 
 GH_URL_RE = re.compile(r"github\.com/[^/\s]+/[^/\s]+/(?:issues|pull)/(\d+)")
 SYNC_SEPARATOR = "----------------------------------------"
 SYNC_FOOTER_RE = re.compile(
-    rf"(?m)^(?:{re.escape(SYNC_SEPARATOR)}\n)?Automatically synced at:\s*\S+$"
+    rf"(?m)^(?:{re.escape(SYNC_SEPARATOR)}[ \t]*\n)?Automatically synced at:\s*\S+$"
 )
 
 
@@ -24,6 +27,27 @@ def append_sync_footer(body: str, url: str) -> str:
 
 def build_jira_description(gh_url: str, body: str) -> str:
     return append_sync_footer(body, gh_url)
+
+
+def build_jira_adf_description(url: str, description: dict) -> dict:
+    """Replace tracking-footer blocks without rebuilding Jira-authored rich text."""
+    document = deepcopy(description)
+    content = []
+    for node in document.get("content", []):
+        text = adf_to_text({"content": [node]})
+        if node.get("type") == "paragraph" and SYNC_FOOTER_RE.fullmatch(text.strip()):
+            if content and (
+                content[-1].get("type") == "rule"
+                or adf_to_text({"content": [content[-1]]}).strip() == SYNC_SEPARATOR
+            ):
+                content.pop()
+            continue
+        content.append(node)
+    footer = sync_footer(url)
+    if content:
+        footer = f"{SYNC_SEPARATOR}\n{footer}"
+    document["content"] = content + text_to_adf(footer)["content"]
+    return document
 
 
 def ensure_jira_description_postfix(

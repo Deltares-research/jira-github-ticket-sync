@@ -84,21 +84,36 @@ def text_to_adf(text: str) -> dict:
     return {"type": "doc", "version": 1, "content": content}
 
 
-def adf_to_text(adf: dict | str | None) -> str:
-    """Extract plain text from an Atlassian Document Format value."""
+def adf_to_text(adf: dict | str | None, *, markdown: bool = False) -> str:
+    """Extract text, optionally preserving bold text and bullets for GitHub."""
     if not adf:
         return ""
     if isinstance(adf, str):
         return adf
 
     def walk(node: dict) -> str:
+        if node.get("type") == "bulletList" and markdown:
+            return "\n".join(
+                "- " + walk(child).replace("\n", "\n  ")
+                for child in node.get("content", [])
+            )
         parts = []
         for child in node.get("content", []):
             if child.get("type") == "text":
-                parts.append(child.get("text", ""))
+                text = child.get("text", "")
+                if (
+                    markdown
+                    and text.strip()
+                    and any(mark["type"] == "strong" for mark in child.get("marks", []))
+                ):
+                    text = text.replace(text.strip(), f"**{text.strip()}**", 1)
+                parts.append(text)
+            elif child.get("type") == "hardBreak":
+                parts.append("\n")
             else:
                 parts.append(walk(child))
-        return "".join(parts)
+        separator = "\n\n" if markdown and node.get("type") == "listItem" else ""
+        return separator.join(parts)
 
     return "\n\n".join(walk(node) for node in adf.get("content", []))
 
@@ -113,11 +128,12 @@ def issue_is_missing(key: str) -> bool:
     return resp.status_code == 404
 
 
-def update_description(key: str, description: str) -> bool:
+def update_description(key: str, description: str | dict) -> bool:
+    document = text_to_adf(description) if isinstance(description, str) else description
     resp = _request(
         "PUT",
         f"issue/{key}",
-        json={"fields": {"description": text_to_adf(description)}},
+        json={"fields": {"description": document}},
     )
     return resp.ok
 

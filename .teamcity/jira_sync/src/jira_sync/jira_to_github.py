@@ -7,6 +7,9 @@ record the link; already-linked issues have their description kept in sync with 
 Jira summary/description, their comments mirrored, and their Jira status
 mirrored back onto GitHub (open <-> closed).
 
+Bold text and bullets are rendered as Markdown for GitHub descriptions and comments.
+Tracking-footer updates preserve the original Jira document and its formatting.
+
 Required env vars: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, GITHUB_TOKEN,
 GITHUB_REPOSITORY.
 
@@ -23,6 +26,7 @@ import jira_sync.github_client as gh
 import jira_sync.jira_client as jira
 from jira_sync.linking import (
     append_sync_footer,
+    build_jira_adf_description,
     build_jira_description,
     ensure_jira_description_postfix,
     parse_gh_number,
@@ -56,6 +60,13 @@ def build_epic_body(description: str) -> str:
     return append_sync_footer(description, jira_url)
 
 
+def update_jira_footer(key: str, original: dict | str | None, url: str) -> None:
+    if isinstance(original, dict):
+        jira.update_description(key, build_jira_adf_description(url, original))
+    else:
+        jira.update_description(key, build_jira_description(url, original or ""))
+
+
 def ensure_epic_issue() -> dict | None:
     epic = jira.get_issue(JIRA_EPIC_KEY)
     if epic is None:
@@ -63,12 +74,14 @@ def ensure_epic_issue() -> dict | None:
         return None
 
     summary = epic["fields"]["summary"]
-    description = jira.adf_to_text(epic["fields"].get("description"))
+    original = epic["fields"].get("description")
+    description = jira.adf_to_text(original, markdown=True)
     jira_url = f"{os.environ['JIRA_BASE_URL'].rstrip('/')}/browse/{JIRA_EPIC_KEY}"
-    updated_description = ensure_jira_description_postfix(description, jira_url)
+    updated_description = ensure_jira_description_postfix(
+        jira.adf_to_text(original), jira_url
+    )
     if updated_description is not None:
-        jira.update_description(JIRA_EPIC_KEY, updated_description)
-        description = updated_description
+        update_jira_footer(JIRA_EPIC_KEY, original, jira_url)
     expected_body = build_epic_body(description)
     footer = sync_footer(jira_url)
     repo = os.environ["GITHUB_REPOSITORY"]
@@ -114,10 +127,11 @@ def sync_comments(key: str, number: int) -> None:
         comment_id = comment["id"]
         if comment_id in already_mirrored:
             continue
-        text = jira.adf_to_text(comment.get("body"))
-        if text.startswith(GH_TO_JIRA_COMMENT_PREFIX):
+        original = comment.get("body")
+        if jira.adf_to_text(original).startswith(GH_TO_JIRA_COMMENT_PREFIX):
             # This comment originated on GitHub; no need to mirror it back.
             continue
+        text = jira.adf_to_text(original, markdown=True)
         author = comment.get("author", {}).get("displayName", "Jira user")
         body = (
             f"{JIRA_TO_GH_COMMENT_PREFIX} by {author}:_\n\n{text}\n\n"
@@ -159,9 +173,10 @@ def ensure_github_issue(
     issue: dict,
 ) -> tuple[int | None, dict | None, str]:
     key = issue["key"]
-    description = jira.adf_to_text(issue["fields"].get("description"))
-    number = parse_gh_number(description)
-    had_tracking_link = number is not None
+    original = issue["fields"].get("description")
+    plain_description = jira.adf_to_text(original)
+    description = jira.adf_to_text(original, markdown=True)
+    number = parse_gh_number(plain_description)
     gh_item = gh.get_issue(number) if number is not None else None
 
     if number is not None and gh_item is None:
@@ -171,10 +186,9 @@ def ensure_github_issue(
 
     if number is not None:
         gh_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/issues/{number}"
-        updated_description = ensure_jira_description_postfix(description, gh_url)
+        updated_description = ensure_jira_description_postfix(plain_description, gh_url)
         if updated_description is not None:
-            jira.update_description(key, updated_description)
-            description = updated_description
+            update_jira_footer(key, original, gh_url)
 
     expected_body = build_synced_body(key, description)
     if number is None:
@@ -184,12 +198,9 @@ def ensure_github_issue(
             return None, None, expected_body
 
         gh_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/issues/{number}"
-        if had_tracking_link:
-            updated_description = build_jira_description(gh_url, description)
-        else:
-            updated_description = ensure_jira_description_postfix(description, gh_url)
+        updated_description = ensure_jira_description_postfix(plain_description, gh_url)
         if updated_description is not None:
-            jira.update_description(key, updated_description)
+            update_jira_footer(key, original, gh_url)
         print(f"{key}: created and linked GitHub #{number}")
 
     if gh_item is None:

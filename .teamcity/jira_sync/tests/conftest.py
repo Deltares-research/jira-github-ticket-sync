@@ -12,6 +12,46 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ["JIRA_EPIC_KEY"] = "MLPS-118"
 
 
+@pytest.fixture
+def formatted_description():
+    def paragraph(text, **extra):
+        return {
+            "type": "paragraph",
+            "content": [{"type": "text", "text": text, **extra}],
+        }
+
+    return {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            paragraph("Goal", marks=[{"type": "strong"}]),
+            paragraph("Publish the Python package on Nexus."),
+            {
+                "type": "bulletList",
+                "content": [
+                    {
+                        "type": "listItem",
+                        "content": [paragraph(title)],
+                    }
+                    for title in [
+                        "Nexus Python workshop",
+                        "How to: install Python proxy",
+                    ]
+                ],
+            },
+        ],
+    }
+
+
+@pytest.fixture
+def formatted_markdown():
+    return (
+        "**Goal**\n\n"
+        "Publish the Python package on Nexus.\n\n"
+        "- Nexus Python workshop\n- How to: install Python proxy"
+    )
+
+
 @pytest.fixture(autouse=True)
 def required_env(monkeypatch):
     """Provide dummy credentials so modules can be imported/used in isolation."""
