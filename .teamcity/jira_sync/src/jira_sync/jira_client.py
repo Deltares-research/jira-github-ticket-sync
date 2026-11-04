@@ -85,13 +85,17 @@ def text_to_adf(text: str) -> dict:
 
 
 def adf_to_text(adf: dict | str | None, *, markdown: bool = False) -> str:
-    """Extract text, optionally preserving bold text and bullets for GitHub."""
+    """Extract text, optionally preserving bold, bullets, links and rules for GitHub."""
     if not adf:
         return ""
     if isinstance(adf, str):
         return adf
 
     def walk(node: dict) -> str:
+        if markdown and node.get("type") == "rule":
+            return "---"
+        if node.get("type") == "inlineCard":
+            return node["attrs"]["url"]
         if node.get("type") == "bulletList" and markdown:
             return "\n".join(
                 "- " + walk(child).replace("\n", "\n  ")
@@ -101,12 +105,20 @@ def adf_to_text(adf: dict | str | None, *, markdown: bool = False) -> str:
         for child in node.get("content", []):
             if child.get("type") == "text":
                 text = child.get("text", "")
+                link = next(
+                    (mark for mark in child.get("marks", []) if mark["type"] == "link"),
+                    None,
+                )
+                if markdown and link:
+                    text = re.sub(r"([\\\[\]])", r"\\\1", text)
                 if (
                     markdown
                     and text.strip()
                     and any(mark["type"] == "strong" for mark in child.get("marks", []))
                 ):
                     text = text.replace(text.strip(), f"**{text.strip()}**", 1)
+                if markdown and link:
+                    text = f"[{text}](<{link['attrs']['href']}>)"
                 parts.append(text)
             elif child.get("type") == "hardBreak":
                 parts.append("\n")

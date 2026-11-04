@@ -39,6 +39,24 @@ def formatted_description():
                     ]
                 ],
             },
+            {"type": "rule"},
+            paragraph(
+                "Workshop",
+                marks=[
+                    {"type": "link", "attrs": {"href": "https://example.test/workshop"}}
+                ],
+            ),
+            {
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "inlineCard",
+                        "attrs": {
+                            "url": "https://example.test/publish?title=Full+title&pageId=123"
+                        },
+                    }
+                ],
+            },
         ],
     }
 
@@ -48,7 +66,9 @@ def formatted_markdown():
     return (
         "**Goal**\n\n"
         "Publish the Python package on Nexus.\n\n"
-        "- Nexus Python workshop\n- How to: install Python proxy"
+        "- Nexus Python workshop\n- How to: install Python proxy\n\n"
+        "---\n\n[Workshop](<https://example.test/workshop>)\n\n"
+        "https://example.test/publish?title=Full+title&pageId=123"
     )
 
 

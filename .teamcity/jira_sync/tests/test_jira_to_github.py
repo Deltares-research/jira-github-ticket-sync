@@ -70,7 +70,7 @@ def test_sync_preserves_description_formatting(
     assert body == module.build_synced_body("MLPS-6", formatted_markdown)
     request.assert_called_once()
     written = request.call_args.kwargs["json"]["fields"]["description"]
-    assert written["content"][:3] == formatted_description["content"]
+    assert written["content"][:-1] == formatted_description["content"]
     assert jira_client.adf_to_text(written).endswith(
         f"Automatically synced at: https://github.com/owner/repo/issues/{number}"
     )
@@ -100,7 +100,7 @@ def test_epic_parent_preserves_formatting(formatted_description, formatted_markd
         "Summary", module.build_epic_body(formatted_markdown)
     )
     written = request.call_args.kwargs["json"]["fields"]["description"]
-    assert written["content"][:3] == formatted_description["content"]
+    assert written["content"][:-1] == formatted_description["content"]
 
 
 def test_sync_comments_preserves_formatting(formatted_description, formatted_markdown):

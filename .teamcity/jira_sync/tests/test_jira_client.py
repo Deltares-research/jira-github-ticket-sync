@@ -128,6 +128,30 @@ def test_adf_to_text_handles_none_and_empty():
     assert results == ["", ""]
 
 
+@pytest.mark.parametrize("bold", [False, True])
+def test_adf_to_text_markdown_preserves_link_destination(bold):
+    url = "https://example.test/workshop_(Python)?pageId=123&title=Full+title"
+    marks = [{"type": "link", "attrs": {"href": url}}]
+    if bold:
+        marks.append({"type": "strong"})
+    document = {
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": "Workshop [Python]", "marks": marks}
+                ],
+            }
+        ],
+    }
+
+    label = r"Workshop \[Python\]"
+    if bold:
+        label = f"**{label}**"
+    assert jira_client.adf_to_text(document, markdown=True) == f"[{label}](<{url}>)"
+    assert jira_client.adf_to_text(document) == "Workshop [Python]"
+
+
 @patch("jira_sync.jira_client.requests.request")
 @pytest.mark.parametrize(
     ("status_code", "is_missing"), [(404, True), (403, False), (500, False)]

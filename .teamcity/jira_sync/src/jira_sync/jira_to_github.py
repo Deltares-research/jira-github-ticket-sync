@@ -7,7 +7,7 @@ record the link; already-linked issues have their description kept in sync with 
 Jira summary/description, their comments mirrored, and their Jira status
 mirrored back onto GitHub (open <-> closed).
 
-Bold text and bullets are rendered as Markdown for GitHub descriptions and comments.
+Bold text, bullets, links and rules use Markdown in GitHub descriptions and comments.
 Tracking-footer updates preserve the original Jira document and its formatting.
 
 Required env vars: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, GITHUB_TOKEN,
@@ -51,7 +51,7 @@ def build_synced_body(key: str, description: str) -> str:
     return append_sync_footer(description, jira_url)
 
 
-def create_and_link_gh_issue(summary: str, body: str) -> int | None:
+def create_gh_issue(summary: str, body: str) -> int | None:
     return gh.create_issue(title=summary, body=body)
 
 
@@ -192,7 +192,7 @@ def ensure_github_issue(
 
     expected_body = build_synced_body(key, description)
     if number is None:
-        number = create_and_link_gh_issue(issue["fields"]["summary"], expected_body)
+        number = create_gh_issue(issue["fields"]["summary"], expected_body)
         if number is None:
             print(f"{key}: failed to create a linked GitHub issue, skipping")
             return None, None, expected_body
