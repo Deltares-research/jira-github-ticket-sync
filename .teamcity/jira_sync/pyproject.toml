@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "TeamCity scripts for Jira-to-GitHub epic sync"
 requires-python = ">=3.12"
 dependencies = [
+    "certifi>=2026.10.18",
     "requests>=2.31",
 ]
 
