@@ -2,6 +2,7 @@ import buildTypes.JiraEpicSync
 import buildTypes.TestJiraSync
 import jetbrains.buildServer.configs.kotlin.*
 import jetbrains.buildServer.configs.kotlin.projectFeatures.dockerRegistry
+import jetbrains.buildServer.configs.kotlin.vcs.GitVcsRoot
 
 version = "2026.2"
 
@@ -45,5 +46,13 @@ project {
     subProject {
         id("AiPlatform")
         name = "AI Platform"
+
+        vcsRoot(GitVcsRoot {
+            id("Settings")
+            name = "AI Platform TeamCity settings"
+            url = "https://github.com/Deltares-research/ai-platform-teamcity.git"
+            branch = "refs/heads/main"
+            authMethod = anonymous()
+        })
     }
 }
