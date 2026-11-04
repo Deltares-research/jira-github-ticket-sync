@@ -41,4 +41,9 @@ project {
 
     buildType(TestJiraSync)
     buildType(JiraEpicSync)
+
+    subProject {
+        id("AiPlatform")
+        name = "AI Platform"
+    }
 }
