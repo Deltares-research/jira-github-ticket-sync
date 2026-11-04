@@ -85,11 +85,20 @@ def text_to_adf(text: str) -> dict:
 
 
 def adf_to_text(adf: dict | str | None, *, markdown: bool = False) -> str:
-    """Extract text, optionally preserving bold, bullets, links and rules for GitHub."""
+    """Extract text, optionally preserving bold, bullets, links and rules for GitHub.
+
+    Coalesce adjacent text nodes with the same rendered marks before formatting.
+    """
     if not adf:
         return ""
     if isinstance(adf, str):
         return adf
+
+    def rendered_marks(node: dict) -> tuple[bool, str | None]:
+        marks = node.get("marks", [])
+        strong = any(mark["type"] == "strong" for mark in marks)
+        link = next((mark for mark in marks if mark["type"] == "link"), None)
+        return strong, link["attrs"]["href"] if link else None
 
     def walk(node: dict) -> str:
         if markdown and node.get("type") == "rule":
@@ -101,8 +110,23 @@ def adf_to_text(adf: dict | str | None, *, markdown: bool = False) -> str:
                 "- " + walk(child).replace("\n", "\n  ")
                 for child in node.get("content", [])
             )
-        parts = []
+        children = []
         for child in node.get("content", []):
+            if (
+                markdown
+                and child.get("type") == "text"
+                and children
+                and children[-1].get("type") == "text"
+                and rendered_marks(children[-1]) == rendered_marks(child)
+            ):
+                children[-1] = {
+                    **children[-1],
+                    "text": children[-1].get("text", "") + child.get("text", ""),
+                }
+            else:
+                children.append(child)
+        parts = []
+        for child in children:
             if child.get("type") == "text":
                 text = child.get("text", "")
                 link = next(

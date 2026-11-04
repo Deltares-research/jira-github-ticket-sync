@@ -169,6 +169,116 @@ def test_issue_is_missing_only_for_not_found(mock_request, status_code, is_missi
     assert result is is_missing
 
 
+@pytest.mark.parametrize(
+    ("first_marks", "second_marks", "boundary", "expected"),
+    [
+        (
+            [{"type": "strong"}],
+            [{"type": "strong"}, {"type": "em"}],
+            [],
+            "**HelloWorld**",
+        ),
+        ([{"type": "strong"}], [{"type": "strong"}], [], "**HelloWorld**"),
+        (
+            [{"type": "strong"}],
+            [{"type": "strong"}],
+            [{"type": "hardBreak"}],
+            "**Hello**\n**World**",
+        ),
+        ([{"type": "strong"}], [], [], "**Hello**World"),
+        ([], [{"type": "strong"}], [], "Hello**World**"),
+    ],
+)
+def test_adf_to_text_markdown_adjacent_runs(
+    first_marks, second_marks, boundary, expected
+):
+    document = {
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": "Hello", "marks": first_marks},
+                    *boundary,
+                    {"type": "text", "text": "World", "marks": second_marks},
+                ],
+            }
+        ]
+    }
+
+    assert jira_client.adf_to_text(document, markdown=True) == expected
+    assert jira_client.adf_to_text(document) == (
+        "Hello\nWorld" if boundary else "HelloWorld"
+    )
+
+
+@pytest.mark.parametrize("same_url", [False, True])
+def test_adf_to_text_markdown_coalesces_only_compatible_links(same_url):
+    first_url = "https://example.test/first"
+    second_url = first_url if same_url else "https://example.test/second"
+    document = {
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Hello",
+                        "marks": [
+                            {"type": "strong"},
+                            {"type": "link", "attrs": {"href": first_url}},
+                        ],
+                    },
+                    {
+                        "type": "text",
+                        "text": "World",
+                        "marks": [
+                            {"type": "link", "attrs": {"href": second_url}},
+                            {"type": "em"},
+                            {"type": "strong"},
+                        ],
+                    },
+                ],
+            }
+        ]
+    }
+    expected = (
+        f"[**HelloWorld**](<{first_url}>)"
+        if same_url
+        else f"[**Hello**](<{first_url}>)[**World**](<{second_url}>)"
+    )
+
+    assert jira_client.adf_to_text(document, markdown=True) == expected
+    assert jira_client.adf_to_text(document) == "HelloWorld"
+    assert document["content"][0]["content"][0]["text"] == "Hello"
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        (" Hello", "World ", " **HelloWorld** "),
+        ("Hello ", "World", "**Hello World**"),
+        ("Hello", " World", "**Hello World**"),
+    ],
+)
+def test_adf_to_text_markdown_preserves_whitespace_in_coalesced_runs(
+    first, second, expected
+):
+    document = {
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": text, "marks": [{"type": "strong"}]}
+                    for text in (first, second)
+                ],
+            }
+        ]
+    }
+
+    assert jira_client.adf_to_text(document, markdown=True) == expected
+    assert jira_client.adf_to_text(document) == first + second
+
+
 @patch("jira_sync.jira_client.requests.request")
 def test_search_paginates_until_last_page(mock_request):
     # Arrange
