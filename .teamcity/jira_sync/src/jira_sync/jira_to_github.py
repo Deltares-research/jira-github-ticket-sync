@@ -9,6 +9,7 @@ mirrored back onto GitHub (open <-> closed).
 
 Bold text, bullets, links and rules use Markdown in GitHub descriptions and comments.
 Tracking-footer updates preserve the original Jira document and its formatting.
+Tracking content is removed from an ADF copy before rendering mirrored descriptions.
 
 Required env vars: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, GITHUB_TOKEN,
 GITHUB_REPOSITORY.
@@ -30,6 +31,7 @@ from jira_sync.linking import (
     build_jira_description,
     ensure_jira_description_postfix,
     parse_gh_number,
+    remove_adf_sync_footer,
     remove_sync_footer,
     sync_footer,
 )
@@ -75,7 +77,12 @@ def ensure_epic_issue() -> dict | None:
 
     summary = epic["fields"]["summary"]
     original = epic["fields"].get("description")
-    description = jira.adf_to_text(original, markdown=True)
+    description = jira.adf_to_text(
+        remove_adf_sync_footer(original)
+        if isinstance(original, dict)
+        else remove_sync_footer(original or ""),
+        markdown=True,
+    )
     jira_url = f"{os.environ['JIRA_BASE_URL'].rstrip('/')}/browse/{JIRA_EPIC_KEY}"
     updated_description = ensure_jira_description_postfix(
         jira.adf_to_text(original), jira_url
@@ -175,13 +182,17 @@ def ensure_github_issue(
     key = issue["key"]
     original = issue["fields"].get("description")
     plain_description = jira.adf_to_text(original)
-    description = jira.adf_to_text(original, markdown=True)
+    description = jira.adf_to_text(
+        remove_adf_sync_footer(original)
+        if isinstance(original, dict)
+        else remove_sync_footer(original or ""),
+        markdown=True,
+    )
     number = parse_gh_number(plain_description)
     gh_item = gh.get_issue(number) if number is not None else None
 
     if number is not None and gh_item is None:
         print(f"{key}: linked GitHub #{number} not found, recreating")
-        description = remove_sync_footer(description)
         number = None
 
     if number is not None:

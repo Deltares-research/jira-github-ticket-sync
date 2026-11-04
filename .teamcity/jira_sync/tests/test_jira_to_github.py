@@ -38,6 +38,77 @@ def test_build_synced_body_appends_jira_postfix():
     )
 
 
+@pytest.fixture(params=["marked_label", "spanning_run"])
+def marked_footer_description(request):
+    authored = {
+        "type": "text",
+        "text": "Authored text",
+        "marks": [{"type": "strong"}],
+    }
+    if request.param == "spanning_run":
+        authored["text"] += f"\n----------------------------------------\n{tracked(5)}"
+        content = [{"type": "paragraph", "content": [authored]}]
+    else:
+        content = [
+            {"type": "paragraph", "content": [authored]},
+            {"type": "rule"},
+            {
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Automatically synced at:",
+                        "marks": [{"type": "strong"}],
+                    },
+                    {
+                        "type": "text",
+                        "text": " https://github.com/owner/repo/issues/5",
+                    },
+                ],
+            },
+        ]
+    return {"type": "doc", "version": 1, "content": content}
+
+
+@pytest.mark.parametrize("linked_issue_exists", [False, True])
+def test_sync_removes_marked_footer_before_rendering(
+    marked_footer_description, linked_issue_exists
+):
+    original = deepcopy(marked_footer_description)
+    issue = make_issue("MLPS-6", marked_footer_description, "new")
+    with (
+        patch(
+            "jira_sync.jira_to_github.gh.get_issue",
+            return_value={"number": 5} if linked_issue_exists else None,
+        ),
+        patch("jira_sync.jira_to_github.gh.create_issue", return_value=11),
+        patch("jira_sync.jira_to_github.jira.update_description"),
+    ):
+        number, _, body = module.ensure_github_issue(issue)
+
+    assert number == (5 if linked_issue_exists else 11)
+    assert body == module.build_synced_body("MLPS-6", "**Authored text**")
+    assert marked_footer_description == original
+
+
+def test_epic_parent_removes_marked_footer_before_rendering(marked_footer_description):
+    original = deepcopy(marked_footer_description)
+    epic = make_issue("MLPS-118", marked_footer_description, "new")
+    with (
+        patch("jira_sync.jira_to_github.jira.get_issue", return_value=epic),
+        patch("jira_sync.jira_to_github.gh.search_issues", return_value=[]),
+        patch("jira_sync.jira_to_github.gh.create_issue", return_value=99) as create,
+        patch("jira_sync.jira_to_github.gh.get_issue", return_value={"number": 99}),
+        patch("jira_sync.jira_to_github.jira.update_description"),
+    ):
+        module.ensure_epic_issue()
+
+    create.assert_called_once_with(
+        "Summary", module.build_epic_body("**Authored text**")
+    )
+    assert marked_footer_description == original
+
+
 @pytest.mark.parametrize("existing_number", [None, 5, 9])
 def test_sync_preserves_description_formatting(
     formatted_description, formatted_markdown, existing_number
@@ -53,6 +124,10 @@ def test_sync_preserves_description_formatting(
             {"type": "hardBreak"},
             {"type": "text", "text": tracked(9)},
         ]
+        footer = description["content"].pop()
+        description["content"][-1]["content"].extend(
+            [{"type": "hardBreak"}, *footer["content"]]
+        )
     original = deepcopy(description)
     issue = make_issue("MLPS-6", description, "new")
     existing_issue = {"number": 5, "state": "open", "body": ""}
