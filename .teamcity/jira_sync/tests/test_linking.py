@@ -467,3 +467,48 @@ def test_replace_footer_spanning_adjacent_paragraphs_with_separator():
     assert "Authored text" in adf_to_text(updated)
     assert build_jira_adf_description(url, updated) == updated
     assert document == original
+
+
+def test_parse_gh_number_prefers_footer_url_over_authored_link():
+    """Test that tracking footer URL takes precedence over authored links."""
+    # Arrange: description with authored link to #42 and footer for #5
+    description = (
+        "See also this related issue: https://github.com/owner/repo/issues/42\n\n"
+        f"{SYNC_SEPARATOR}\n"
+        "Automatically synced at: https://github.com/owner/repo/issues/5"
+    )
+
+    # Act
+    number = parse_gh_number(description)
+
+    # Assert: Should extract #5 from footer, not #42 from authored link
+    assert number == 5
+
+
+def test_parse_gh_number_falls_back_to_authored_link_without_footer():
+    """Test fallback to authored link when no tracking footer present."""
+    # Arrange: description with only authored link, no footer
+    description = "See also this related issue: https://github.com/owner/repo/issues/42"
+
+    # Act
+    number = parse_gh_number(description)
+
+    # Assert: Should extract #42 as fallback since no footer exists
+    assert number == 42
+
+
+def test_parse_gh_number_multiple_authored_links_prefers_footer():
+    """Test that footer URL is preferred even with multiple authored links."""
+    # Arrange: multiple authored links before footer
+    description = (
+        "Related issues: #42 at https://github.com/owner/repo/issues/42\n"
+        "And also #7 at https://github.com/owner/repo/issues/7\n\n"
+        f"{SYNC_SEPARATOR}\n"
+        "Automatically synced at: https://github.com/owner/repo/pull/99"
+    )
+
+    # Act
+    number = parse_gh_number(description)
+
+    # Assert: Should extract #99 from footer, not #42 or #7
+    assert number == 99

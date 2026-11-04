@@ -169,5 +169,25 @@ def remove_sync_footer(description: str) -> str:
 
 
 def parse_gh_number(description: str | None) -> int | None:
-    match = GH_URL_RE.search(description or "")
+    """Extract GitHub issue/PR number from description.
+
+    Prefers the tracking footer URL when present, falling back to other
+    URLs (authored smart-cards) only if no footer is found. This prevents
+    accidentally selecting an unrelated issue linked in the description.
+    """
+    if not description:
+        return None
+
+    # First, try to find a URL in the tracking footer
+    # The footer is typically at the end, possibly with separator before it
+    footer_match = SYNC_FOOTER_RE.search(description)
+    if footer_match:
+        footer_text = footer_match.group(0)
+        url_match = GH_URL_RE.search(footer_text)
+        if url_match:
+            return int(url_match.group(1))
+
+    # Fallback: search for any GitHub URL in the description
+    # This handles descriptions without a footer
+    match = GH_URL_RE.search(description)
     return int(match.group(1)) if match else None

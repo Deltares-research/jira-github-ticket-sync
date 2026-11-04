@@ -21,5 +21,6 @@ target/
 
 # Editor and operating system files
 .idea/
+.vscode/settings.json
 .DS_Store
 Thumbs.db
