@@ -84,21 +84,72 @@ def text_to_adf(text: str) -> dict:
     return {"type": "doc", "version": 1, "content": content}
 
 
-def adf_to_text(adf: dict | str | None) -> str:
-    """Extract plain text from an Atlassian Document Format value."""
+def adf_to_text(adf: dict | str | None, *, markdown: bool = False) -> str:
+    """Extract text, optionally preserving bold, bullets, links and rules for GitHub.
+
+    Coalesce adjacent text nodes with the same rendered marks before formatting.
+    """
     if not adf:
         return ""
     if isinstance(adf, str):
         return adf
 
+    def rendered_marks(node: dict) -> tuple[bool, str | None]:
+        marks = node.get("marks", [])
+        strong = any(mark["type"] == "strong" for mark in marks)
+        link = next((mark for mark in marks if mark["type"] == "link"), None)
+        return strong, link["attrs"]["href"] if link else None
+
     def walk(node: dict) -> str:
-        parts = []
+        if markdown and node.get("type") == "rule":
+            return "---"
+        if node.get("type") == "inlineCard":
+            return node["attrs"]["url"]
+        if node.get("type") == "bulletList" and markdown:
+            return "\n".join(
+                "- " + walk(child).replace("\n", "\n  ")
+                for child in node.get("content", [])
+            )
+        children = []
         for child in node.get("content", []):
+            if (
+                markdown
+                and child.get("type") == "text"
+                and children
+                and children[-1].get("type") == "text"
+                and rendered_marks(children[-1]) == rendered_marks(child)
+            ):
+                children[-1] = {
+                    **children[-1],
+                    "text": children[-1].get("text", "") + child.get("text", ""),
+                }
+            else:
+                children.append(child)
+        parts = []
+        for child in children:
             if child.get("type") == "text":
-                parts.append(child.get("text", ""))
+                text = child.get("text", "")
+                link = next(
+                    (mark for mark in child.get("marks", []) if mark["type"] == "link"),
+                    None,
+                )
+                if markdown and link:
+                    text = re.sub(r"([\\\[\]])", r"\\\1", text)
+                if (
+                    markdown
+                    and text.strip()
+                    and any(mark["type"] == "strong" for mark in child.get("marks", []))
+                ):
+                    text = text.replace(text.strip(), f"**{text.strip()}**", 1)
+                if markdown and link:
+                    text = f"[{text}](<{link['attrs']['href']}>)"
+                parts.append(text)
+            elif child.get("type") == "hardBreak":
+                parts.append("\n")
             else:
                 parts.append(walk(child))
-        return "".join(parts)
+        separator = "\n\n" if markdown and node.get("type") == "listItem" else ""
+        return separator.join(parts)
 
     return "\n\n".join(walk(node) for node in adf.get("content", []))
 
@@ -113,11 +164,12 @@ def issue_is_missing(key: str) -> bool:
     return resp.status_code == 404
 
 
-def update_description(key: str, description: str) -> bool:
+def update_description(key: str, description: str | dict) -> bool:
+    document = text_to_adf(description) if isinstance(description, str) else description
     resp = _request(
         "PUT",
         f"issue/{key}",
-        json={"fields": {"description": text_to_adf(description)}},
+        json={"fields": {"description": document}},
     )
     return resp.ok
 
