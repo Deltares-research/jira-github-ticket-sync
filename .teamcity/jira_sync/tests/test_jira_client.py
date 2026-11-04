@@ -117,6 +117,61 @@ def test_adf_to_text_handles_plain_string():
     assert result == plain_text
 
 
+@pytest.mark.parametrize(
+    ("texts", "marks", "expected"),
+    [
+        (
+            ["Hello", "World"],
+            [[{"type": "strong"}], [{"type": "strong"}, {"type": "em"}]],
+            "**HelloWorld**",
+        ),
+        ([" Hello ", "World "], [[{"type": "strong"}]] * 2, " **Hello World** "),
+        (["Hello", "World"], [[{"type": "strong"}], []], "**Hello**World"),
+        (
+            ["[Hello]", "World"],
+            [[{"type": "link", "attrs": {"href": "https://example.test/a_(b)"}}]] * 2,
+            r"[\[Hello\]World](<https://example.test/a_(b)>)",
+        ),
+    ],
+)
+def test_markdown_text_runs(texts, marks, expected):
+    document = {
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": text, "marks": run_marks}
+                    for text, run_marks in zip(texts, marks)
+                ],
+            }
+        ]
+    }
+    assert jira_client.adf_to_text(document, markdown=True) == expected
+    assert jira_client.adf_to_text(document) == "".join(texts)
+
+
+@pytest.mark.parametrize("boundary", ["hardBreak", "link"])
+def test_markdown_keeps_inline_boundaries(boundary):
+    content = [
+        {"type": "text", "text": text, "marks": [{"type": "strong"}]}
+        for text in ("Hello", "World")
+    ]
+    if boundary == "hardBreak":
+        content.insert(1, {"type": "hardBreak"})
+        expected = "**Hello**\n**World**"
+    else:
+        content[1]["marks"].append(
+            {"type": "link", "attrs": {"href": "https://example.test"}}
+        )
+        expected = "**Hello**[**World**](<https://example.test>)"
+    assert (
+        jira_client.adf_to_text(
+            {"content": [{"type": "paragraph", "content": content}]}, markdown=True
+        )
+        == expected
+    )
+
+
 def test_adf_to_text_handles_none_and_empty():
     # Arrange
     values = [None, {}]
