@@ -1,3 +1,4 @@
+from copy import deepcopy
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +21,71 @@ def tracked(number, extra=""):
     if extra:
         text = f"{extra}\n\n{text}"
     return text
+
+
+@pytest.mark.parametrize("surface", ["issue", "epic", "comment"])
+@pytest.mark.parametrize("linked", [False, True])
+def test_epic_parent_child_and_comment_preserve_rich_text(surface, linked):
+    document = module.jira.text_to_adf(
+        "Hello\n\nItem\n\nhttps://github.com/owner/repo/issues/42"
+    )
+    document["content"][0]["content"][0]["marks"] = [{"type": "strong"}]
+    document["content"][1] = {
+        "type": "bulletList",
+        "content": [{"type": "listItem", "content": [document["content"][1]]}],
+    }
+    document["content"].insert(2, {"type": "rule"})
+    document["content"][3]["content"] = [
+        {
+            "type": "inlineCard",
+            "attrs": {"url": "https://github.com/owner/repo/issues/42"},
+        }
+    ]
+    markdown = "**Hello**\n\n- Item\n\n---\n\nhttps://github.com/owner/repo/issues/42"
+    authored = deepcopy(document["content"])
+    if linked:
+        document["content"].extend(module.jira.text_to_adf(tracked(5))["content"])
+        document["content"][-1]["content"][0]["marks"] = [{"type": "strong"}]
+    original = deepcopy(document)
+    with (
+        patch.object(
+            module.jira,
+            "get_issue",
+            return_value=make_issue("MLPS-118", document, "new"),
+        ),
+        patch.object(
+            module.gh,
+            "get_issue",
+            side_effect=lambda n: {"number": n} if n == 5 else None,
+        ) as get,
+        patch.object(module.gh, "create_issue", return_value=11) as create,
+        patch.object(module.gh, "search_issues", return_value=[]),
+        patch.object(module.jira, "update_description") as update,
+        patch.object(module.gh, "list_comments", return_value=[]),
+        patch.object(
+            module.jira,
+            "list_comments",
+            return_value=[make_jira_comment("10", document)],
+        ),
+        patch.object(module.gh, "add_comment") as comment,
+    ):
+        if surface == "issue":
+            number, _, body = module.ensure_github_issue(
+                make_issue("MLPS-6", document, "new")
+            )
+            assert number == (5 if linked else 11)
+            assert body == module.build_synced_body("MLPS-6", markdown)
+            get.assert_any_call(5 if linked else 42)
+        elif surface == "epic":
+            module.ensure_epic_issue()
+            create.assert_called_once_with("Summary", module.build_epic_body(markdown))
+        else:
+            module.sync_comments("MLPS-6", 5)
+            assert markdown in comment.call_args.args[1]
+        if surface != "comment":
+            written = update.call_args.args[1]
+            assert written["content"][:-1] == authored
+    assert document == original
 
 
 def test_build_synced_body_appends_jira_postfix():
