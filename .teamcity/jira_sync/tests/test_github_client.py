@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+import requests
 from jira_sync import github_client as gh
 
 
@@ -250,15 +252,21 @@ def test_search_issues_paginates(mock_request):
 
 
 @patch("jira_sync.github_client.requests.request")
-def test_search_issues_returns_empty_on_failure(mock_request):
+@pytest.mark.parametrize("after_first_page", [False, True])
+def test_search_issues_raises_on_failure(mock_request, after_first_page):
     # Arrange
-    mock_request.return_value = _mock_response(ok=False)
+    failure = _mock_response(ok=False, status_code=403, text="Forbidden")
+    failure.raise_for_status.side_effect = requests.HTTPError("403 Forbidden")
+    pages = (
+        [_mock_response(json_data={"items": [{"number": n} for n in range(100)]})]
+        if after_first_page
+        else []
+    )
+    mock_request.side_effect = pages + [failure]
 
-    # Act
-    items = gh.search_issues("repo:owner/repo MLPS-118")
-
-    # Assert
-    assert items == []
+    with pytest.raises(requests.HTTPError, match="403 Forbidden"):
+        gh.search_issues("repo:owner/repo MLPS-118")
+    assert mock_request.call_count == len(pages) + 1
 
 
 def test_headers_include_bearer_token(monkeypatch):

@@ -1,11 +1,11 @@
-"""Shared helpers for encoding and parsing GitHub<->Jira links."""
+"""Helpers for GitHub tracking footers and reading legacy Jira links."""
 
 from __future__ import annotations
 
 import re
 from copy import deepcopy
 
-from jira_sync.jira_client import adf_to_text, text_to_adf
+from jira_sync.jira_client import adf_to_text
 
 GH_URL_RE = re.compile(r"github\.com/[^/\s]+/[^/\s]+/(?:issues|pull)/(\d+)")
 SYNC_SEPARATOR = "----------------------------------------"
@@ -23,10 +23,6 @@ def append_sync_footer(body: str, url: str) -> str:
     if description:
         description = f"{description}\n\n{SYNC_SEPARATOR}\n"
     return f"{description}{sync_footer(url)}"
-
-
-def build_jira_description(gh_url: str, body: str) -> str:
-    return append_sync_footer(body, gh_url)
 
 
 def _remove_inline_footer(paragraph: dict, text: str) -> None:
@@ -138,29 +134,6 @@ def remove_adf_sync_footer(description: dict) -> dict:
 
     document["content"] = content
     return document
-
-
-def build_jira_adf_description(url: str, description: dict) -> dict:
-    """Replace tracking blocks or inline footer lines, preserving authored rich text."""
-    document = remove_adf_sync_footer(description)
-    content = document["content"]
-    footer = sync_footer(url)
-    if content:
-        footer = f"{SYNC_SEPARATOR}\n{footer}"
-    document["content"] = content + text_to_adf(footer)["content"]
-    return document
-
-
-def ensure_jira_description_postfix(
-    current_description: str, gh_url: str
-) -> str | None:
-    """Append a sync footer, preserving the Jira-authored description."""
-    updated_description = build_jira_description(
-        gh_url, remove_sync_footer(current_description)
-    )
-    if current_description == updated_description:
-        return None
-    return updated_description
 
 
 def remove_sync_footer(description: str) -> str:

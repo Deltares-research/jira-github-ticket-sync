@@ -1,4 +1,4 @@
-"""Minimal Jira Cloud REST API v3 client used by the epic-sync workflows."""
+"""Read-only Jira Cloud REST API v3 client used by the epic-sync workflows."""
 
 from __future__ import annotations
 
@@ -27,16 +27,18 @@ def _url(path: str) -> str:
     return f"{_base_url()}/rest/api/3/{path.lstrip('/')}"
 
 
-def _request(method: str, path: str, **kwargs: Any) -> requests.Response:
+def _get(path: str, **kwargs: Any) -> requests.Response:
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    for attempt in range(GET_ATTEMPTS):
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             resp = requests.request(
-                method, _url(path), auth=_auth(), headers=headers, **kwargs
+                "GET", _url(path), auth=_auth(), headers=headers, **kwargs
             )
             break
         except (requests.ConnectionError, requests.Timeout):
-            if method.upper() != "GET" or attempt == GET_ATTEMPTS - 1:
+            if attempt >= GET_ATTEMPTS:
                 raise
             print(
                 f"Jira API GET {path} connection failed; retrying in {RETRY_DELAY_SECONDS}s",
@@ -45,7 +47,7 @@ def _request(method: str, path: str, **kwargs: Any) -> requests.Response:
             time.sleep(RETRY_DELAY_SECONDS)
     if not resp.ok:
         print(
-            f"Jira API {method} {path} failed: {resp.status_code} {resp.text}",
+            f"Jira API GET {path} failed: {resp.status_code} {resp.text}",
             file=sys.stderr,
         )
     return resp
@@ -158,23 +160,13 @@ def adf_to_text(adf: dict | str | None, *, markdown: bool = False) -> str:
 
 
 def get_issue(key: str) -> dict | None:
-    resp = _request("GET", f"issue/{key}")
+    resp = _get(f"issue/{key}")
     return resp.json() if resp.ok else None
 
 
 def issue_is_missing(key: str) -> bool:
-    resp = _request("GET", f"issue/{key}")
+    resp = _get(f"issue/{key}")
     return resp.status_code == 404
-
-
-def update_description(key: str, description: str | dict) -> bool:
-    document = text_to_adf(description) if isinstance(description, str) else description
-    resp = _request(
-        "PUT",
-        f"issue/{key}",
-        json={"fields": {"description": document}},
-    )
-    return resp.ok
 
 
 def search(jql: str, fields: list[str], max_results: int = 100) -> list[dict]:
@@ -184,7 +176,7 @@ def search(jql: str, fields: list[str], max_results: int = 100) -> list[dict]:
         params = {"jql": jql, "fields": ",".join(fields), "maxResults": max_results}
         if next_page_token:
             params["nextPageToken"] = next_page_token
-        resp = _request("GET", "search/jql", params=params)
+        resp = _get("search/jql", params=params)
         if not resp.ok:
             resp.raise_for_status()
         data = resp.json()
@@ -196,5 +188,5 @@ def search(jql: str, fields: list[str], max_results: int = 100) -> list[dict]:
 
 
 def list_comments(key: str) -> list[dict]:
-    resp = _request("GET", f"issue/{key}/comment", params={"maxResults": 100})
+    resp = _get(f"issue/{key}/comment", params={"maxResults": 100})
     return resp.json().get("comments", []) if resp.ok else []

@@ -69,19 +69,17 @@ def test_get_request_raises_after_retry_limit(mock_request, mock_sleep):
     assert [call.args[0] for call in mock_sleep.call_args_list] == [1, 1]
 
 
-@patch("jira_sync.jira_client.time.sleep")
 @patch("jira_sync.jira_client.requests.request")
-def test_write_request_is_not_retried(mock_request, mock_sleep):
-    # Arrange
-    mock_request.side_effect = requests.ConnectionError("connection reset")
+def test_all_jira_operations_are_read_only(mock_request):
+    mock_request.return_value = _mock_response()
+    jira_client.get_issue("PROJ-1")
+    jira_client.issue_is_missing("PROJ-1")
+    jira_client.search("project = PROJ", fields=["summary"])
+    jira_client.list_comments("PROJ-1")
 
-    # Act and assert
-    with pytest.raises(requests.ConnectionError, match="connection reset"):
-        jira_client.update_description("PROJ-1", "updated")
-
-    # Assert
-    mock_request.assert_called_once()
-    mock_sleep.assert_not_called()
+    assert mock_request.call_count == 4
+    assert all(call.args[0] == "GET" for call in mock_request.call_args_list)
+    assert not hasattr(jira_client, "update_description")
 
 
 def test_text_to_adf_wraps_plain_text():
