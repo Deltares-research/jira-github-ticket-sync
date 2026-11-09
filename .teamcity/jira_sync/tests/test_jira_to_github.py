@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import pytest
 from jira_sync import jira_to_github as module
+from jira_sync.linking import SYNC_NOTICE
 
 
 def make_issue(key, description, status_category, summary="Summary"):
@@ -93,6 +94,7 @@ def test_build_synced_body_appends_jira_postfix():
     # Assert
     assert body == (
         "Jira description\n\n----------------------------------------\n"
+        f"{SYNC_NOTICE}\n\n"
         "Automatically synced at: https://example.atlassian.net/browse/MLPS-127"
     )
 
@@ -311,7 +313,7 @@ def test_jira_to_github_creates_and_links_gh_issue_when_unlinked():
     create_issue.assert_called_once()
     assert create_issue.call_args.kwargs["title"] == "Summary"
     expected_url = "https://example.atlassian.net/browse/MLPS-6"
-    expected_body = f"test description\n\n----------------------------------------\nAutomatically synced at: {expected_url}"
+    expected_body = f"test description\n\n----------------------------------------\n{SYNC_NOTICE}\n\nAutomatically synced at: {expected_url}"
     assert create_issue.call_args.kwargs["body"] == expected_body
     assert issues[0]["fields"]["description"] == "test description"
     add_comment.assert_not_called()
@@ -374,6 +376,7 @@ def test_jira_to_github_creates_epic_parent_and_links_child_issue():
     assert create_issue.call_args.args[0] == "Epic summary"
     assert create_issue.call_args.args[1] == (
         "epic description\n\n----------------------------------------\n"
+        f"{SYNC_NOTICE}\n\n"
         "Automatically synced at: https://example.atlassian.net/browse/MLPS-118"
     )
     assert epic["fields"]["description"] == "epic description"
@@ -398,7 +401,7 @@ def test_jira_to_github_updates_gh_issue_body_when_out_of_sync():
 
     # Assert
     expected_url = "https://example.atlassian.net/browse/MLPS-7"
-    expected_body = f"updated description\n\n----------------------------------------\nAutomatically synced at: {expected_url}"
+    expected_body = f"updated description\n\n----------------------------------------\n{SYNC_NOTICE}\n\nAutomatically synced at: {expected_url}"
     update_issue.assert_called_once_with(12, body=expected_body)
 
 
@@ -413,7 +416,7 @@ def test_jira_to_github_does_not_update_gh_issue_body_when_already_in_sync():
             "jira_sync.jira_to_github.gh.get_issue",
             return_value={
                 "state": "open",
-                "body": f"same\n\n----------------------------------------\nAutomatically synced at: {expected_url_base}",
+                "body": f"same\n\n----------------------------------------\n{SYNC_NOTICE}\n\nAutomatically synced at: {expected_url_base}",
             },
         ),
         patch("jira_sync.jira_to_github.gh.update_issue") as update_issue,
@@ -443,14 +446,15 @@ def test_skips_when_gh_issue_missing():
     set_state.assert_not_called()
 
 
-def test_sync_all_deletes_missing_jira_child_from_epic_parent():
+@pytest.mark.parametrize("notice", ["", SYNC_NOTICE + "\n\n"])
+def test_sync_all_deletes_missing_jira_child_from_epic_parent(notice):
     # Arrange
     child = {
         "number": 10,
         "node_id": "I_kwDO-test",
         "body": (
             "Description\n\n----------------------------------------\n"
-            "Automatically synced at: "
+            f"{notice}Automatically synced at: "
             "https://example.atlassian.net/browse/MLPS-99"
         ),
     }

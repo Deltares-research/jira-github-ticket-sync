@@ -9,8 +9,13 @@ from jira_sync.jira_client import adf_to_text
 
 GH_URL_RE = re.compile(r"github\.com/[^/\s]+/[^/\s]+/(?:issues|pull)/(\d+)")
 SYNC_SEPARATOR = "----------------------------------------"
+SYNC_NOTICE = (
+    "This issue is a read-only mirror of Jira. Please make edits in Jira; "
+    "changes made here may be overwritten."
+)
 SYNC_FOOTER_RE = re.compile(
-    rf"(?m)^(?:{re.escape(SYNC_SEPARATOR)}[ \t]*\n)?Automatically synced at:\s*\S+$"
+    rf"(?m)^(?:{re.escape(SYNC_SEPARATOR)}[ \t]*\n)?"
+    rf"(?:{re.escape(SYNC_NOTICE)}\n\n)?Automatically synced at:\s*\S+$"
 )
 
 
@@ -19,10 +24,11 @@ def sync_footer(url: str) -> str:
 
 
 def append_sync_footer(body: str, url: str) -> str:
+    """Append editing guidance and a tracking link to a GitHub mirror."""
     description = remove_sync_footer(body)
     if description:
         description = f"{description}\n\n{SYNC_SEPARATOR}\n"
-    return f"{description}{sync_footer(url)}"
+    return f"{description}{SYNC_NOTICE}\n\n{sync_footer(url)}"
 
 
 def _remove_inline_footer(paragraph: dict, text: str) -> None:

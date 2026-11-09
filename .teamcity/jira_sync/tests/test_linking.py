@@ -3,6 +3,7 @@ from copy import deepcopy
 import pytest
 from jira_sync.jira_client import adf_to_text, text_to_adf
 from jira_sync.linking import (
+    SYNC_NOTICE,
     SYNC_SEPARATOR,
     append_sync_footer,
     parse_gh_number,
@@ -102,8 +103,22 @@ def test_append_sync_footer_adds_separator_after_description():
     # Assert
     assert result == (
         f"description\n\n{SYNC_SEPARATOR}\n"
+        f"{SYNC_NOTICE}\n\n"
         "Automatically synced at: https://example.test/issue/1"
     )
+
+
+@pytest.mark.parametrize("description", ["", "Description"])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_footer_guidance_is_not_duplicated_when_rebuilt(description, legacy):
+    url = "https://example.test/browse/PROJ-1"
+    body = append_sync_footer(description, url)
+    if legacy:
+        body = body.replace(f"{SYNC_NOTICE}\n\n", "")
+    updated = append_sync_footer(body, url)
+    assert updated.count(SYNC_NOTICE) == 1
+    assert append_sync_footer(updated, url) == updated
+    assert remove_sync_footer(updated) == description
 
 
 def test_remove_sync_footer_preserves_content():

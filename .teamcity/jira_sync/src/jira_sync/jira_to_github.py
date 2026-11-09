@@ -10,6 +10,7 @@ mirrored back onto GitHub (open <-> closed).
 Bold text, bullets, links and rules use Markdown in GitHub descriptions and comments.
 Jira is read-only: descriptions, comments and other Jira data are never modified.
 GitHub tracking footers identify existing mirrors; legacy Jira links remain readable.
+GitHub footers direct users to edit in Jira because mirrored changes may be overwritten.
 Multiple mirrors for the same Jira issue abort sync rather than selecting arbitrarily.
 Tracking content is removed from an ADF copy before rendering mirrored descriptions.
 
@@ -158,7 +159,7 @@ def delete_missing_jira_issues(
         if not footer.startswith(footer_prefix):
             continue
 
-        jira_key = footer[len(footer_prefix) :]
+        jira_key = footer.rsplit("/", 1)[-1]
         if not JIRA_KEY_RE.fullmatch(jira_key) or jira_key in jira_issue_keys:
             continue
         if not jira.issue_is_missing(jira_key):
