@@ -150,6 +150,25 @@ def test_markdown_text_runs(texts, marks, expected):
     assert jira_client.adf_to_text(document) == "".join(texts)
 
 
+def test_markdown_escapes_special_characters_in_bold_text():
+    document = {
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "a*b_c`d",
+                        "marks": [{"type": "strong"}],
+                    }
+                ],
+            }
+        ]
+    }
+
+    assert jira_client.adf_to_text(document, markdown=True) == r"**a\*b\_c\`d**"
+
+
 @pytest.mark.parametrize("boundary", ["hardBreak", "link"])
 def test_markdown_keeps_inline_boundaries(boundary):
     content = [

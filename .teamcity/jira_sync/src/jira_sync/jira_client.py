@@ -133,8 +133,11 @@ def adf_to_text(adf: dict | str | None, *, markdown: bool = False) -> str:
                     (mark for mark in child.get("marks", []) if mark["type"] == "link"),
                     None,
                 )
-                if markdown and link:
-                    text = re.sub(r"([\\\[\]])", r"\\\1", text)
+                if markdown and (
+                    link
+                    or any(mark["type"] == "strong" for mark in child.get("marks", []))
+                ):
+                    text = re.sub(r"([\\\[\]`*_])", r"\\\1", text)
                 if (
                     markdown
                     and text.strip()
