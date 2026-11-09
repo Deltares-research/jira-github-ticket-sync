@@ -138,7 +138,7 @@ def search_issues(query: str) -> list[dict]:
                 f"GitHub API GET /search/issues failed: {resp.status_code} {resp.text}",
                 file=sys.stderr,
             )
-            break
+            resp.raise_for_status()
         page_items = resp.json().get("items", [])
         items.extend(page_items)
         if len(page_items) < 100:

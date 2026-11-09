@@ -1,7 +1,9 @@
+from copy import deepcopy
 from unittest.mock import patch
 
 import pytest
 from jira_sync import jira_to_github as module
+from jira_sync.linking import SYNC_NOTICE
 
 
 def make_issue(key, description, status_category, summary="Summary"):
@@ -22,6 +24,66 @@ def tracked(number, extra=""):
     return text
 
 
+@pytest.mark.parametrize("surface", ["issue", "epic", "comment"])
+@pytest.mark.parametrize("linked", [False, True])
+def test_epic_parent_child_and_comment_preserve_rich_text(surface, linked):
+    document = module.jira.text_to_adf(
+        "Hello\n\nItem\n\nhttps://github.com/owner/repo/issues/42"
+    )
+    document["content"][0]["content"][0]["marks"] = [{"type": "strong"}]
+    document["content"][1] = {
+        "type": "bulletList",
+        "content": [{"type": "listItem", "content": [document["content"][1]]}],
+    }
+    document["content"].insert(2, {"type": "rule"})
+    document["content"][3]["content"] = [
+        {
+            "type": "inlineCard",
+            "attrs": {"url": "https://github.com/owner/repo/issues/42"},
+        }
+    ]
+    markdown = "**Hello**\n\n- Item\n\n---\n\nhttps://github.com/owner/repo/issues/42"
+    if linked:
+        document["content"].extend(module.jira.text_to_adf(tracked(5))["content"])
+        document["content"][-1]["content"][0]["marks"] = [{"type": "strong"}]
+    original = deepcopy(document)
+    with (
+        patch.object(
+            module.jira,
+            "get_issue",
+            return_value=make_issue("MLPS-118", document, "new"),
+        ),
+        patch.object(
+            module.gh,
+            "get_issue",
+            side_effect=lambda n: {"number": n} if n == 5 else None,
+        ) as get,
+        patch.object(module.gh, "create_issue", return_value=11) as create,
+        patch.object(module.gh, "search_issues", return_value=[]),
+        patch.object(module.gh, "list_comments", return_value=[]),
+        patch.object(
+            module.jira,
+            "list_comments",
+            return_value=[make_jira_comment("10", document)],
+        ),
+        patch.object(module.gh, "add_comment") as comment,
+    ):
+        if surface == "issue":
+            number, _, body = module.ensure_github_issue(
+                make_issue("MLPS-6", document, "new")
+            )
+            assert number == (5 if linked else 11)
+            assert body == module.build_synced_body("MLPS-6", markdown)
+            get.assert_any_call(5 if linked else 42)
+        elif surface == "epic":
+            module.ensure_epic_issue()
+            create.assert_called_once_with("Summary", module.build_epic_body(markdown))
+        else:
+            module.sync_comments("MLPS-6", 5)
+            assert markdown in comment.call_args.args[1]
+    assert document == original
+
+
 def test_build_synced_body_appends_jira_postfix():
     # Arrange
     description = "Jira description"
@@ -32,12 +94,19 @@ def test_build_synced_body_appends_jira_postfix():
     # Assert
     assert body == (
         "Jira description\n\n----------------------------------------\n"
+        f"{SYNC_NOTICE}\n\n"
         "Automatically synced at: https://example.atlassian.net/browse/MLPS-127"
     )
 
 
 def make_jira_comment(comment_id, text, author="Jira user"):
     return {"id": comment_id, "author": {"displayName": author}, "body": text}
+
+
+@pytest.fixture(autouse=True)
+def github_search():
+    with patch.object(module.gh, "search_issues", return_value=[]):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -229,7 +298,6 @@ def test_jira_to_github_creates_and_links_gh_issue_when_unlinked():
         patch(
             "jira_sync.jira_to_github.gh.create_issue", return_value=11
         ) as create_issue,
-        patch("jira_sync.jira_to_github.jira.update_description") as update_description,
         patch(
             "jira_sync.jira_to_github.gh.get_issue",
             return_value={"state": "open", "body": None},
@@ -245,14 +313,9 @@ def test_jira_to_github_creates_and_links_gh_issue_when_unlinked():
     create_issue.assert_called_once()
     assert create_issue.call_args.kwargs["title"] == "Summary"
     expected_url = "https://example.atlassian.net/browse/MLPS-6"
-    expected_body = f"test description\n\n----------------------------------------\nAutomatically synced at: {expected_url}"
+    expected_body = f"test description\n\n----------------------------------------\n{SYNC_NOTICE}\n\nAutomatically synced at: {expected_url}"
     assert create_issue.call_args.kwargs["body"] == expected_body
-    # The GH link is recorded by appending "Automatically synced at: <url>" to
-    # the Jira description; no label and no GitHub-side comment are used.
-    update_description.assert_called_once_with(
-        "MLPS-6",
-        "test description\n\n----------------------------------------\nAutomatically synced at: https://github.com/owner/repo/issues/11",
-    )
+    assert issues[0]["fields"]["description"] == "test description"
     add_comment.assert_not_called()
     # Freshly created GitHub issue's body (None here) doesn't match the fetched
     # snapshot, so the sync still pushes the body once to reconcile the mock.
@@ -272,7 +335,6 @@ def test_jira_to_github_recreates_and_relinks_missing_gh_issue():
         patch(
             "jira_sync.jira_to_github.gh.create_issue", return_value=11
         ) as create_issue,
-        patch("jira_sync.jira_to_github.jira.update_description") as update_description,
         patch("jira_sync.jira_to_github.gh.update_issue"),
         patch("jira_sync.jira_to_github.sync_comments"),
     ):
@@ -283,10 +345,7 @@ def test_jira_to_github_recreates_and_relinks_missing_gh_issue():
     create_issue.assert_called_once()
     assert create_issue.call_args.kwargs["title"] == "Summary"
     assert "issues/9" not in create_issue.call_args.kwargs["body"]
-    update_description.assert_called_once_with(
-        "MLPS-6",
-        "test description\n\n----------------------------------------\nAutomatically synced at: https://github.com/owner/repo/issues/11",
-    )
+    assert issues[0]["fields"]["description"] == tracked(9, "test description")
 
 
 def test_jira_to_github_creates_epic_parent_and_links_child_issue():
@@ -303,9 +362,9 @@ def test_jira_to_github_creates_epic_parent_and_links_child_issue():
         patch(
             "jira_sync.jira_to_github.gh.create_issue", return_value=99
         ) as create_issue,
-        patch("jira_sync.jira_to_github.jira.update_description") as update_description,
         patch("jira_sync.jira_to_github.gh.get_issue", side_effect=[parent, child]),
         patch("jira_sync.jira_to_github.gh.list_sub_issue_ids", return_value=set()),
+        patch("jira_sync.jira_to_github.gh.list_sub_issues", return_value=[]),
         patch("jira_sync.jira_to_github.gh.add_sub_issue") as add_sub_issue,
         patch("jira_sync.jira_to_github.gh.update_issue"),
         patch("jira_sync.jira_to_github.sync_comments"),
@@ -317,13 +376,10 @@ def test_jira_to_github_creates_epic_parent_and_links_child_issue():
     assert create_issue.call_args.args[0] == "Epic summary"
     assert create_issue.call_args.args[1] == (
         "epic description\n\n----------------------------------------\n"
+        f"{SYNC_NOTICE}\n\n"
         "Automatically synced at: https://example.atlassian.net/browse/MLPS-118"
     )
-    update_description.assert_called_once_with(
-        "MLPS-118",
-        "epic description\n\n----------------------------------------\n"
-        "Automatically synced at: https://example.atlassian.net/browse/MLPS-118",
-    )
+    assert epic["fields"]["description"] == "epic description"
     add_sub_issue.assert_called_once_with(99, 50)
 
 
@@ -345,7 +401,7 @@ def test_jira_to_github_updates_gh_issue_body_when_out_of_sync():
 
     # Assert
     expected_url = "https://example.atlassian.net/browse/MLPS-7"
-    expected_body = f"updated description\n\n----------------------------------------\nAutomatically synced at: {expected_url}"
+    expected_body = f"updated description\n\n----------------------------------------\n{SYNC_NOTICE}\n\nAutomatically synced at: {expected_url}"
     update_issue.assert_called_once_with(12, body=expected_body)
 
 
@@ -360,7 +416,7 @@ def test_jira_to_github_does_not_update_gh_issue_body_when_already_in_sync():
             "jira_sync.jira_to_github.gh.get_issue",
             return_value={
                 "state": "open",
-                "body": f"same\n\n----------------------------------------\nAutomatically synced at: {expected_url_base}",
+                "body": f"same\n\n----------------------------------------\n{SYNC_NOTICE}\n\nAutomatically synced at: {expected_url_base}",
             },
         ),
         patch("jira_sync.jira_to_github.gh.update_issue") as update_issue,
@@ -380,6 +436,7 @@ def test_skips_when_gh_issue_missing():
     with (
         patch("jira_sync.jira_to_github.jira.search", return_value=issues),
         patch("jira_sync.jira_to_github.gh.get_issue", return_value=None),
+        patch("jira_sync.jira_to_github.gh.create_issue", return_value=None),
         patch("jira_sync.jira_to_github.gh.set_state") as set_state,
     ):
         # Act
@@ -389,14 +446,15 @@ def test_skips_when_gh_issue_missing():
     set_state.assert_not_called()
 
 
-def test_sync_all_deletes_missing_jira_child_from_epic_parent():
+@pytest.mark.parametrize("notice", ["", SYNC_NOTICE + "\n\n"])
+def test_sync_all_deletes_missing_jira_child_from_epic_parent(notice):
     # Arrange
     child = {
         "number": 10,
         "node_id": "I_kwDO-test",
         "body": (
             "Description\n\n----------------------------------------\n"
-            "Automatically synced at: "
+            f"{notice}Automatically synced at: "
             "https://example.atlassian.net/browse/MLPS-99"
         ),
     }
@@ -462,3 +520,60 @@ def test_sync_all_skips_deletion_without_epic_parent():
 
     # Assert
     list_sub_issues.assert_not_called()
+
+
+@pytest.mark.parametrize("legacy_link", [None, 9])
+def test_github_footer_takes_precedence_over_legacy_jira_link(legacy_link):
+    description = tracked(legacy_link, "Description") if legacy_link else "Description"
+    issue = make_issue("MLPS-6", description, "new")
+    body = module.build_synced_body("MLPS-6", "Description")
+    existing = {"number": 11, "state": "open", "body": body}
+    with (
+        patch.object(module.gh, "search_issues", return_value=[existing]) as search,
+        patch.object(module.gh, "get_issue", return_value=existing) as get,
+        patch.object(module.gh, "create_issue") as create,
+    ):
+        assert module.ensure_github_issue(issue) == (11, existing, body)
+
+    search.assert_called_once_with('repo:owner/repo "MLPS-6" in:body')
+    get.assert_called_once_with(11)
+    create.assert_not_called()
+    assert issue["fields"]["description"] == description
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Unrelated https://example.atlassian.net/browse/MLPS-6",
+        module.sync_footer("https://other.atlassian.net/browse/MLPS-6"),
+        module.sync_footer("https://example.atlassian.net/browse/MLPS-60"),
+        module.sync_footer("https://example.atlassian.net/browse/MLPS-6")
+        + "\nAuthored",
+        None,
+    ],
+)
+def test_github_lookup_requires_matching_tracking_footer(body):
+    with patch.object(
+        module.gh, "search_issues", return_value=[{"number": 1, "body": body}]
+    ):
+        assert module.find_github_issue("MLPS-6") is None
+
+
+@pytest.mark.parametrize("numbers", [(58, 21), (21, 58)])
+def test_epic_parent_duplicates_abort_before_changes(numbers):
+    body = module.build_epic_body("Epic description")
+    matches = [{"number": number, "body": body} for number in numbers]
+    with (
+        patch.object(
+            module.jira,
+            "get_issue",
+            return_value=make_issue("MLPS-118", "Epic description", "new"),
+        ),
+        patch.object(module.gh, "search_issues", return_value=matches),
+        patch.object(module.gh, "create_issue") as create,
+        patch.object(module.gh, "update_issue") as update,
+        pytest.raises(RuntimeError, match="multiple GitHub mirrors"),
+    ):
+        module.ensure_epic_issue()
+    create.assert_not_called()
+    update.assert_not_called()

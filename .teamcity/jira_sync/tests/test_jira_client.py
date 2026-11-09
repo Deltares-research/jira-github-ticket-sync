@@ -69,19 +69,17 @@ def test_get_request_raises_after_retry_limit(mock_request, mock_sleep):
     assert [call.args[0] for call in mock_sleep.call_args_list] == [1, 1]
 
 
-@patch("jira_sync.jira_client.time.sleep")
 @patch("jira_sync.jira_client.requests.request")
-def test_write_request_is_not_retried(mock_request, mock_sleep):
-    # Arrange
-    mock_request.side_effect = requests.ConnectionError("connection reset")
+def test_all_jira_operations_are_read_only(mock_request):
+    mock_request.return_value = _mock_response()
+    jira_client.get_issue("PROJ-1")
+    jira_client.issue_is_missing("PROJ-1")
+    jira_client.search("project = PROJ", fields=["summary"])
+    jira_client.list_comments("PROJ-1")
 
-    # Act and assert
-    with pytest.raises(requests.ConnectionError, match="connection reset"):
-        jira_client.update_description("PROJ-1", "updated")
-
-    # Assert
-    mock_request.assert_called_once()
-    mock_sleep.assert_not_called()
+    assert mock_request.call_count == 4
+    assert all(call.args[0] == "GET" for call in mock_request.call_args_list)
+    assert not hasattr(jira_client, "update_description")
 
 
 def test_text_to_adf_wraps_plain_text():
@@ -115,6 +113,80 @@ def test_adf_to_text_handles_plain_string():
 
     # Assert
     assert result == plain_text
+
+
+@pytest.mark.parametrize(
+    ("texts", "marks", "expected"),
+    [
+        (
+            ["Hello", "World"],
+            [[{"type": "strong"}], [{"type": "strong"}, {"type": "em"}]],
+            "**HelloWorld**",
+        ),
+        ([" Hello ", "World "], [[{"type": "strong"}]] * 2, " **Hello World** "),
+        (["Hello", "World"], [[{"type": "strong"}], []], "**Hello**World"),
+        (
+            ["[Hello]", "World"],
+            [[{"type": "link", "attrs": {"href": "https://example.test/a_(b)"}}]] * 2,
+            r"[\[Hello\]World](<https://example.test/a_(b)>)",
+        ),
+    ],
+)
+def test_markdown_text_runs(texts, marks, expected):
+    document = {
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": text, "marks": run_marks}
+                    for text, run_marks in zip(texts, marks)
+                ],
+            }
+        ]
+    }
+    assert jira_client.adf_to_text(document, markdown=True) == expected
+    assert jira_client.adf_to_text(document) == "".join(texts)
+
+
+def test_markdown_escapes_special_characters_in_bold_text():
+    document = {
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "a*b_c`d",
+                        "marks": [{"type": "strong"}],
+                    }
+                ],
+            }
+        ]
+    }
+
+    assert jira_client.adf_to_text(document, markdown=True) == r"**a\*b\_c\`d**"
+
+
+@pytest.mark.parametrize("boundary", ["hardBreak", "link"])
+def test_markdown_keeps_inline_boundaries(boundary):
+    content = [
+        {"type": "text", "text": text, "marks": [{"type": "strong"}]}
+        for text in ("Hello", "World")
+    ]
+    if boundary == "hardBreak":
+        content.insert(1, {"type": "hardBreak"})
+        expected = "**Hello**\n**World**"
+    else:
+        content[1]["marks"].append(
+            {"type": "link", "attrs": {"href": "https://example.test"}}
+        )
+        expected = "**Hello**[**World**](<https://example.test>)"
+    assert (
+        jira_client.adf_to_text(
+            {"content": [{"type": "paragraph", "content": content}]}, markdown=True
+        )
+        == expected
+    )
 
 
 def test_adf_to_text_handles_none_and_empty():

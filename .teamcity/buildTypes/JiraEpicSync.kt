@@ -16,7 +16,7 @@ object JiraEpicSync : BuildType({
 
     steps {
         script {
-            name = "Sync Jira and GitHub"
+            name = "Sync Jira to GitHub (Jira read-only)"
             scriptContent = """
                 pip install ./.teamcity/jira_sync
                 python -m jira_sync.epic_sync

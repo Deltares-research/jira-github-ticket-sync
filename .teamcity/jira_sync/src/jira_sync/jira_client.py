@@ -1,4 +1,4 @@
-"""Minimal Jira Cloud REST API v3 client used by the epic-sync workflows."""
+"""Read-only Jira Cloud REST API v3 client used by the epic-sync workflows."""
 
 from __future__ import annotations
 
@@ -27,16 +27,18 @@ def _url(path: str) -> str:
     return f"{_base_url()}/rest/api/3/{path.lstrip('/')}"
 
 
-def _request(method: str, path: str, **kwargs: Any) -> requests.Response:
+def _get(path: str, **kwargs: Any) -> requests.Response:
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    for attempt in range(GET_ATTEMPTS):
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             resp = requests.request(
-                method, _url(path), auth=_auth(), headers=headers, **kwargs
+                "GET", _url(path), auth=_auth(), headers=headers, **kwargs
             )
             break
         except (requests.ConnectionError, requests.Timeout):
-            if method.upper() != "GET" or attempt == GET_ATTEMPTS - 1:
+            if attempt >= GET_ATTEMPTS:
                 raise
             print(
                 f"Jira API GET {path} connection failed; retrying in {RETRY_DELAY_SECONDS}s",
@@ -45,7 +47,7 @@ def _request(method: str, path: str, **kwargs: Any) -> requests.Response:
             time.sleep(RETRY_DELAY_SECONDS)
     if not resp.ok:
         print(
-            f"Jira API {method} {path} failed: {resp.status_code} {resp.text}",
+            f"Jira API GET {path} failed: {resp.status_code} {resp.text}",
             file=sys.stderr,
         )
     return resp
@@ -84,42 +86,87 @@ def text_to_adf(text: str) -> dict:
     return {"type": "doc", "version": 1, "content": content}
 
 
-def adf_to_text(adf: dict | str | None) -> str:
-    """Extract plain text from an Atlassian Document Format value."""
+def adf_to_text(adf: dict | str | None, *, markdown: bool = False) -> str:
+    """Extract text, optionally preserving bold, bullets, links and rules for GitHub.
+
+    Coalesce adjacent text nodes with the same rendered marks before formatting.
+    """
     if not adf:
         return ""
     if isinstance(adf, str):
         return adf
 
+    def rendered_marks(node: dict) -> tuple[bool, str | None]:
+        marks = node.get("marks", [])
+        strong = any(mark["type"] == "strong" for mark in marks)
+        link = next((mark for mark in marks if mark["type"] == "link"), None)
+        return strong, link["attrs"]["href"] if link else None
+
     def walk(node: dict) -> str:
-        parts = []
+        if markdown and node.get("type") == "rule":
+            return "---"
+        if node.get("type") == "inlineCard":
+            return node["attrs"]["url"]
+        if node.get("type") == "bulletList" and markdown:
+            return "\n".join(
+                "- " + walk(child).replace("\n", "\n  ")
+                for child in node.get("content", [])
+            )
+        children = []
         for child in node.get("content", []):
+            if (
+                markdown
+                and child.get("type") == "text"
+                and children
+                and children[-1].get("type") == "text"
+                and rendered_marks(children[-1]) == rendered_marks(child)
+            ):
+                children[-1] = {
+                    **children[-1],
+                    "text": children[-1].get("text", "") + child.get("text", ""),
+                }
+            else:
+                children.append(child)
+        parts = []
+        for child in children:
             if child.get("type") == "text":
-                parts.append(child.get("text", ""))
+                text = child.get("text", "")
+                link = next(
+                    (mark for mark in child.get("marks", []) if mark["type"] == "link"),
+                    None,
+                )
+                if markdown and (
+                    link
+                    or any(mark["type"] == "strong" for mark in child.get("marks", []))
+                ):
+                    text = re.sub(r"([\\\[\]`*_])", r"\\\1", text)
+                if (
+                    markdown
+                    and text.strip()
+                    and any(mark["type"] == "strong" for mark in child.get("marks", []))
+                ):
+                    text = text.replace(text.strip(), f"**{text.strip()}**", 1)
+                if markdown and link:
+                    text = f"[{text}](<{link['attrs']['href']}>)"
+                parts.append(text)
+            elif child.get("type") == "hardBreak":
+                parts.append("\n")
             else:
                 parts.append(walk(child))
-        return "".join(parts)
+        separator = "\n\n" if markdown and node.get("type") == "listItem" else ""
+        return separator.join(parts)
 
     return "\n\n".join(walk(node) for node in adf.get("content", []))
 
 
 def get_issue(key: str) -> dict | None:
-    resp = _request("GET", f"issue/{key}")
+    resp = _get(f"issue/{key}")
     return resp.json() if resp.ok else None
 
 
 def issue_is_missing(key: str) -> bool:
-    resp = _request("GET", f"issue/{key}")
+    resp = _get(f"issue/{key}")
     return resp.status_code == 404
-
-
-def update_description(key: str, description: str) -> bool:
-    resp = _request(
-        "PUT",
-        f"issue/{key}",
-        json={"fields": {"description": text_to_adf(description)}},
-    )
-    return resp.ok
 
 
 def search(jql: str, fields: list[str], max_results: int = 100) -> list[dict]:
@@ -129,7 +176,7 @@ def search(jql: str, fields: list[str], max_results: int = 100) -> list[dict]:
         params = {"jql": jql, "fields": ",".join(fields), "maxResults": max_results}
         if next_page_token:
             params["nextPageToken"] = next_page_token
-        resp = _request("GET", "search/jql", params=params)
+        resp = _get("search/jql", params=params)
         if not resp.ok:
             resp.raise_for_status()
         data = resp.json()
@@ -141,5 +188,5 @@ def search(jql: str, fields: list[str], max_results: int = 100) -> list[dict]:
 
 
 def list_comments(key: str) -> list[dict]:
-    resp = _request("GET", f"issue/{key}/comment", params={"maxResults": 100})
+    resp = _get(f"issue/{key}/comment", params={"maxResults": 100})
     return resp.json().get("comments", []) if resp.ok else []

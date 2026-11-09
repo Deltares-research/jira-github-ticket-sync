@@ -2,16 +2,20 @@
 
 Each full sync finds every Jira issue under the tracked epic and mirrors it
 onto GitHub: issues not yet linked to a GitHub issue/PR get a new
-GitHub issue created, with a sync footer added to the Jira description to
-record the link; already-linked issues have their description kept in sync with the
+GitHub issue created, with a sync footer on GitHub recording the Jira link;
+already-linked issues have their description kept in sync with the
 Jira summary/description, their comments mirrored, and their Jira status
 mirrored back onto GitHub (open <-> closed).
 
-Required env vars: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, GITHUB_TOKEN,
-GITHUB_REPOSITORY.
+Bold text, bullets, links and rules use Markdown in GitHub descriptions and comments.
+Jira is read-only: descriptions, comments and other Jira data are never modified.
+GitHub tracking footers identify existing mirrors; legacy Jira links remain readable.
+GitHub footers direct users to edit in Jira because mirrored changes may be overwritten.
+Multiple mirrors for the same Jira issue abort sync rather than selecting arbitrarily.
+Tracking content is removed from an ADF copy before rendering mirrored descriptions.
 
-Optional env vars:
-    JIRA_EPIC_KEY   required Jira epic key to synchronize
+Required env vars: JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_EPIC_KEY, GITHUB_TOKEN,
+GITHUB_REPOSITORY.
 """
 
 from __future__ import annotations
@@ -23,9 +27,8 @@ import jira_sync.github_client as gh
 import jira_sync.jira_client as jira
 from jira_sync.linking import (
     append_sync_footer,
-    build_jira_description,
-    ensure_jira_description_postfix,
     parse_gh_number,
+    remove_adf_sync_footer,
     remove_sync_footer,
     sync_footer,
 )
@@ -36,8 +39,7 @@ JIRA_JQL = f'parent = "{JIRA_EPIC_KEY}"'
 JIRA_COMMENT_ID_RE = re.compile(r"<!-- jira-comment-id:(\S+) -->")
 JIRA_KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*-\d+")
 
-# Marker prefixes used to recognize comments that were themselves produced by
-# this sync (either direction), so they're never re-mirrored and can't loop.
+# Retain the legacy GitHub-to-Jira marker to avoid re-mirroring old comments.
 JIRA_TO_GH_COMMENT_PREFIX = "_Synced from Jira comment"
 GH_TO_JIRA_COMMENT_PREFIX = "Synced from GitHub comment"
 
@@ -56,6 +58,24 @@ def build_epic_body(description: str) -> str:
     return append_sync_footer(description, jira_url)
 
 
+def find_github_issue(key: str) -> dict | None:
+    jira_url = f"{os.environ['JIRA_BASE_URL'].rstrip('/')}/browse/{key}"
+    footer = sync_footer(jira_url)
+    repo = os.environ["GITHUB_REPOSITORY"]
+    matches = [
+        item
+        for item in gh.search_issues(f'repo:{repo} "{key}" in:body')
+        if (item.get("body") or "").rstrip().endswith(footer)
+    ]
+    if len(matches) > 1:
+        numbers = ", ".join(f"#{item['number']}" for item in matches)
+        raise RuntimeError(
+            f"{key}: multiple GitHub mirrors in {repo}: {numbers}. "
+            "Remove the tracking footer from duplicate issues before syncing."
+        )
+    return matches[0] if matches else None
+
+
 def ensure_epic_issue() -> dict | None:
     epic = jira.get_issue(JIRA_EPIC_KEY)
     if epic is None:
@@ -63,20 +83,16 @@ def ensure_epic_issue() -> dict | None:
         return None
 
     summary = epic["fields"]["summary"]
-    description = jira.adf_to_text(epic["fields"].get("description"))
-    jira_url = f"{os.environ['JIRA_BASE_URL'].rstrip('/')}/browse/{JIRA_EPIC_KEY}"
-    updated_description = ensure_jira_description_postfix(description, jira_url)
-    if updated_description is not None:
-        jira.update_description(JIRA_EPIC_KEY, updated_description)
-        description = updated_description
+    original = epic["fields"].get("description")
+    description = jira.adf_to_text(
+        remove_adf_sync_footer(original)
+        if isinstance(original, dict)
+        else remove_sync_footer(original or ""),
+        markdown=True,
+    )
     expected_body = build_epic_body(description)
-    footer = sync_footer(jira_url)
-    repo = os.environ["GITHUB_REPOSITORY"]
-
-    for item in gh.search_issues(f'repo:{repo} "{JIRA_EPIC_KEY}" in:body'):
-        body = item.get("body") or ""
-        if not body.rstrip().endswith(footer):
-            continue
+    item = find_github_issue(JIRA_EPIC_KEY)
+    if item is not None:
         if item.get("title") != summary or item.get("body") != expected_body:
             gh.update_issue(item["number"], title=summary, body=expected_body)
         return gh.get_issue(item["number"]) or item
@@ -114,10 +130,11 @@ def sync_comments(key: str, number: int) -> None:
         comment_id = comment["id"]
         if comment_id in already_mirrored:
             continue
-        text = jira.adf_to_text(comment.get("body"))
-        if text.startswith(GH_TO_JIRA_COMMENT_PREFIX):
+        original = comment.get("body")
+        if jira.adf_to_text(original).startswith(GH_TO_JIRA_COMMENT_PREFIX):
             # This comment originated on GitHub; no need to mirror it back.
             continue
+        text = jira.adf_to_text(original, markdown=True)
         author = comment.get("author", {}).get("displayName", "Jira user")
         body = (
             f"{JIRA_TO_GH_COMMENT_PREFIX} by {author}:_\n\n{text}\n\n"
@@ -142,7 +159,7 @@ def delete_missing_jira_issues(
         if not footer.startswith(footer_prefix):
             continue
 
-        jira_key = footer[len(footer_prefix) :]
+        jira_key = footer.rsplit("/", 1)[-1]
         if not JIRA_KEY_RE.fullmatch(jira_key) or jira_key in jira_issue_keys:
             continue
         if not jira.issue_is_missing(jira_key):
@@ -159,22 +176,24 @@ def ensure_github_issue(
     issue: dict,
 ) -> tuple[int | None, dict | None, str]:
     key = issue["key"]
-    description = jira.adf_to_text(issue["fields"].get("description"))
-    number = parse_gh_number(description)
-    had_tracking_link = number is not None
-    gh_item = gh.get_issue(number) if number is not None else None
+    original = issue["fields"].get("description")
+    plain_description = jira.adf_to_text(original)
+    description = jira.adf_to_text(
+        remove_adf_sync_footer(original)
+        if isinstance(original, dict)
+        else remove_sync_footer(original or ""),
+        markdown=True,
+    )
+    gh_item = find_github_issue(key)
+    number = (
+        gh_item["number"] if gh_item is not None else parse_gh_number(plain_description)
+    )
+    if number is not None:
+        gh_item = gh.get_issue(number)
 
     if number is not None and gh_item is None:
         print(f"{key}: linked GitHub #{number} not found, recreating")
-        description = remove_sync_footer(description)
         number = None
-
-    if number is not None:
-        gh_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/issues/{number}"
-        updated_description = ensure_jira_description_postfix(description, gh_url)
-        if updated_description is not None:
-            jira.update_description(key, updated_description)
-            description = updated_description
 
     expected_body = build_synced_body(key, description)
     if number is None:
@@ -183,13 +202,6 @@ def ensure_github_issue(
             print(f"{key}: failed to create a linked GitHub issue, skipping")
             return None, None, expected_body
 
-        gh_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/issues/{number}"
-        if had_tracking_link:
-            updated_description = build_jira_description(gh_url, description)
-        else:
-            updated_description = ensure_jira_description_postfix(description, gh_url)
-        if updated_description is not None:
-            jira.update_description(key, updated_description)
         print(f"{key}: created and linked GitHub #{number}")
 
     if gh_item is None:
