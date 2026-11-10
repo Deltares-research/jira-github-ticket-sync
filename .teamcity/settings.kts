@@ -17,7 +17,6 @@ project {
         password("jira-api-token", DslContext.getParameter("jira-api-token"), display = ParameterDisplay.HIDDEN)
         password("env.JIRA_EMAIL", "%jira-email%", display = ParameterDisplay.HIDDEN)
         password("env.JIRA_API_TOKEN", "%jira-api-token%", display = ParameterDisplay.HIDDEN)
-        password("env.GITHUB_TOKEN", DslContext.getParameter("github-token"), display = ParameterDisplay.HIDDEN)
 
         param("harbor-user", DslContext.getParameter("harbor-user"))
         password("harbor-secret", DslContext.getParameter("harbor-secret"))

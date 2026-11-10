@@ -21,3 +21,9 @@ def required_env(monkeypatch):
     monkeypatch.setenv("JIRA_EPIC_KEY", "MLPS-118")
     monkeypatch.setenv("GITHUB_TOKEN", "dummy-gh-token")
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    for name in (
+        "GITHUB_APP_ID",
+        "GITHUB_APP_INSTALLATION_ID",
+        "GITHUB_APP_PRIVATE_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)

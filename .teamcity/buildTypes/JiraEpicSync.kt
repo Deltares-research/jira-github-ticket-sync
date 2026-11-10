@@ -14,6 +14,12 @@ object JiraEpicSync : BuildType({
         root(DslContext.settingsRoot)
     }
 
+    params {
+        param("env.GITHUB_APP_ID", DslContext.getParameter("github-app-id"))
+        param("env.GITHUB_APP_INSTALLATION_ID", DslContext.getParameter("github-app-installation-id"))
+        password("env.GITHUB_APP_PRIVATE_KEY", DslContext.getParameter("github-app-private-key"), display = ParameterDisplay.HIDDEN)
+    }
+
     steps {
         script {
             name = "Sync Jira to GitHub (Jira read-only)"
