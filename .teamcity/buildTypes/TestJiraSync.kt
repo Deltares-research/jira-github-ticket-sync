@@ -2,7 +2,6 @@ package buildTypes
 
 import jetbrains.buildServer.configs.kotlin.*
 import jetbrains.buildServer.configs.kotlin.buildFeatures.XmlReport
-import jetbrains.buildServer.configs.kotlin.buildFeatures.dockerSupport
 import jetbrains.buildServer.configs.kotlin.buildFeatures.xmlReport
 import jetbrains.buildServer.configs.kotlin.buildSteps.script
 import jetbrains.buildServer.configs.kotlin.triggers.vcs
@@ -47,11 +46,6 @@ object TestJiraSync : BuildType({
     }
 
     features {
-        dockerSupport {
-            loginToRegistry = on {
-                dockerRegistryId = "DOCKER_REGISTRY_HARBOR"
-            }
-        }
         xmlReport {
             reportType = XmlReport.XmlReportType.JUNIT
             rules = "test-results.xml"
