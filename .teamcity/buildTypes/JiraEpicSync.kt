@@ -1,7 +1,6 @@
 package buildTypes
 
 import jetbrains.buildServer.configs.kotlin.*
-import jetbrains.buildServer.configs.kotlin.buildFeatures.dockerSupport
 import jetbrains.buildServer.configs.kotlin.buildSteps.script
 import jetbrains.buildServer.configs.kotlin.triggers.schedule
 
@@ -12,6 +11,12 @@ object JiraEpicSync : BuildType({
 
     vcs {
         root(DslContext.settingsRoot)
+    }
+
+    params {
+        param("env.GITHUB_APP_ID", DslContext.getParameter("github-app-id"))
+        param("env.GITHUB_APP_INSTALLATION_ID", DslContext.getParameter("github-app-installation-id"))
+        password("env.GITHUB_APP_PRIVATE_KEY", DslContext.getParameter("github-app-private-key"), display = ParameterDisplay.HIDDEN)
     }
 
     steps {
@@ -39,13 +44,5 @@ object JiraEpicSync : BuildType({
     requirements {
         equals("teamcity.agent.jvm.os.name", "Linux")
         equals("docker.server.osType", "linux")
-    }
-
-    features {
-        dockerSupport {
-            loginToRegistry = on {
-                dockerRegistryId = "DOCKER_REGISTRY_HARBOR"
-            }
-        }
     }
 })
