@@ -5,7 +5,8 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jira_sync import epic_sync as app
+
+from jira_sync import github_auth
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ def app_credentials(monkeypatch):
 
 @pytest.fixture
 def token_request():
-    with patch("jira_sync.epic_sync.requests.post") as post:
+    with patch("jira_sync.github_auth.requests.post") as post:
         post.return_value = Mock(
             status_code=201, json=Mock(return_value={"token": "installation-token"})
         )
@@ -33,8 +34,8 @@ def token_request():
 
 def test_exchange_signs_jwt_and_scopes_token(app_credentials, token_request, capsys):
     now = int(time.time())
-    with patch("jira_sync.epic_sync.time.time", return_value=now):
-        assert app.installation_token() == "installation-token"
+    with patch("jira_sync.github_auth.time.time", return_value=now):
+        assert github_auth.get_installation_token() == "installation-token"
 
     token_request.assert_called_once()
     args, kwargs = token_request.call_args
